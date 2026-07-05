@@ -182,8 +182,8 @@ export function Session() {
     )
   })
   const forms = createMemo(() => {
-    const sessionIDs = session()?.parentID ? [route.sessionID] : [route.sessionID, ...descendantSessionIDs()]
-    return sessionIDs.flatMap((sessionID) => data.session.form.list(sessionID) ?? [])
+    if (session()?.parentID) return []
+    return data.session.form.list(route.sessionID) ?? []
   })
   const [composer, setComposer] = createStore({
     open: false,
@@ -236,19 +236,18 @@ export function Session() {
 
   createEffect(
     on(descendantSessionIDs, (sessionIDs) => {
-      void Promise.all(
-        sessionIDs.flatMap((sessionID) => [
-          data.session.permission.refresh(sessionID),
-          data.session.form.refresh(sessionID),
-        ]),
-      )
+      void Promise.all(sessionIDs.map((sessionID) => data.session.permission.refresh(sessionID)))
     }),
   )
 
   createEffect(() => {
     const sessionID = route.sessionID
     void (async () => {
-      await data.session.refresh(sessionID)
+      await Promise.all([
+        data.session.refresh(sessionID),
+        data.session.permission.refresh(sessionID),
+        data.session.form.refresh(sessionID),
+      ])
       const info = data.session.get(sessionID)
       if (!info) {
         toast.show({
@@ -259,9 +258,6 @@ export function Session() {
         navigate({ type: "home" })
         return
       }
-      if (!info.parentID) await data.session.refreshChildren(sessionID)
-      await Promise.all([data.session.permission.refresh(sessionID), data.session.form.refresh(sessionID)])
-
       project.workspace.set(info.location.workspaceID)
       editor.reconnect(info.location.directory)
       if (route.sessionID === sessionID && scroll) scroll.scrollBy(100_000)
@@ -938,6 +934,7 @@ export function Session() {
                   onClose={() => setComposer("open", false)}
                 />
                 <Switch>
+                  <Match when={composer.open || !!session()?.parentID}>{null}</Match>
                   <Match when={permissions().length > 0}>
                     <PermissionPrompt request={permissions()[0]} directory={session()?.location.directory} />
                   </Match>
@@ -949,7 +946,6 @@ export function Session() {
                       }}
                     </Show>
                   </Match>
-                  <Match when={composer.open || !!session()?.parentID}>{null}</Match>
                   <Match when={!disabled()}>
                     <pluginRuntime.Slot
                       name="session_prompt"
